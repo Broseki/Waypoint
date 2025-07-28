@@ -5,9 +5,22 @@ menu "Waypoint Device Configuration"
     config BLINK_GPIO
         int "Blink GPIO number"
         range ENV_GPIO_RANGE_MIN ENV_GPIO_OUT_RANGE_MAX
-        default 8
+        default 15
         help
             GPIO number (IOxx) to blink on and off the LED.
             Some GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.
+    
+    config WIFI_SSID
+        string "WiFi SSID"
+        default "your-ssid"
+        help
+            The SSID of the WiFi network to connect to.
+            This is used for connecting to the network to send and receive data.
+    
+    config WIFI_PASSWORD
+        string "WiFi Password"
+        default "your-password"
+        help
+            The password for the WiFi network.
 
 endmenu

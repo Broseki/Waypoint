@@ -219,3 +219,8 @@ $RECYCLE.BIN/
 # End of https://www.toptal.com/developers/gitignore/api/clion+all,c++,cmake,macos,windows,linux
 
 build/
+sdkconfig.local
+sdkconfig.local.*
+managed_components/
+.cache/
+dependencies.lock

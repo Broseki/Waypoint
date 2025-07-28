@@ -3,11 +3,28 @@
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "portmacro.h"
 #include "sdkconfig.h"
+#include "esp_wifi.h"
+#include "esp_event.h"
+#include "nvs_flash.h"
+#include "esp_netif.h"
 
 static const char *TAG = "Waypoint";
 
 #define BLINK_GPIO CONFIG_BLINK_GPIO
+
+// ThingsBoard Configuration
+#define TELEMETRY_PERIOD_SECONDS 30
+#define THINGSBOARD_SERVER "iot.corp.whitetail.is"
+
+// PKI
+extern const uint8_t certs_whitetail_pem_start[] asm("_binary_certs_whitetail_pem_start");
+extern const uint8_t certs_whitetail_pem_end[]   asm("_binary_certs_whitetail_pem_end");
+
+// WiFi
+const char *WIFI_SSID = CONFIG_WIFI_SSID;
+const char *WIFI_PASSWORD = CONFIG_WIFI_PASSWORD;
 
 static uint8_t s_led_state = 0;
 
@@ -17,28 +34,75 @@ static void blink_led(void)
     gpio_set_level(BLINK_GPIO, s_led_state);
 }
 
+void send_telemetry(void *pvParameters) {
+    while (1) {
+        blink_led();
+        /* Toggle the LED state */
+        s_led_state = !s_led_state;
+        vTaskDelay(250 / portTICK_PERIOD_MS);
+    }
+}
+
+void blink_led_task(void *pvParameters) {
+    while (1) {
+        ESP_LOGI(TAG, "TELEMETRY");
+        vTaskDelay((TELEMETRY_PERIOD_SECONDS * 1000) / portTICK_PERIOD_MS);
+    }
+}
+
+static void configure_thingsboard() {
+    return;
+}
+
+static void configure_wifi() {
+    ESP_LOGI(TAG, "Initializing WiFi...");
+
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_sta();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    wifi_config_t wifi_config = { 0 };
+    strncpy((char *)wifi_config.sta.ssid, WIFI_SSID, sizeof(wifi_config.sta.ssid));
+    strncpy((char *)wifi_config.sta.password, WIFI_PASSWORD, sizeof(wifi_config.sta.password));
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    ESP_LOGI(TAG, "WiFi initialization complete. Connecting to %s...", WIFI_SSID);
+}
+
+static void configure_nvs_flash() {
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ESP_ERROR_CHECK(nvs_flash_init());
+    }
+}
+
 static void configure_led(void)
 {
-    ESP_LOGI(TAG, "Example configured to blink GPIO LED!");
     gpio_reset_pin(BLINK_GPIO);
     /* Set the GPIO as a push/pull output */
     gpio_set_direction(BLINK_GPIO, GPIO_MODE_OUTPUT);
 }
 
-void blink_led_task(void *pvParameters) {
-    while (1) {
-        ESP_LOGI(TAG, "Turning the LED %s!", s_led_state == true ? "ON" : "OFF");
-        blink_led();
-        /* Toggle the LED state */
-        s_led_state = !s_led_state;
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-    }
+static void configure() {
+    ESP_LOGI(TAG, "Configuring System...");
+    configure_led();
+    configure_nvs_flash();
+    configure_wifi();
+    configure_thingsboard();
+    ESP_LOGI(TAG, "Configuration complete!");
 }
 
 void app_main(void)
 {
     /* Configure the peripheral according to the LED type */
-    configure_led();
+    configure();
 
     xTaskCreate(
         blink_led_task,    // Task function
@@ -48,4 +112,14 @@ void app_main(void)
         10,                 // Task priority
         NULL                // Task handle (optional)
     );
+
+    xTaskCreate(
+        send_telemetry,    // Task function
+        "Telemetry",        // Task name (for debugging)
+        2048,               // Stack size in bytes
+        NULL,               // Task parameter
+        10,                 // Task priority
+        NULL                // Task handle (optional)
+    );
+
 }
