@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string> // Added for std::string
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
@@ -23,12 +24,21 @@ static const char *TAG = "Waypoint";
 #define THINGSBOARD_DEVICE_TOKEN CONFIG_MQTT_KEY
 
 // PKI
-extern const uint8_t certs_whitetail_pem_start[] asm("_binary_certs_whitetail_pem_start");
-extern const uint8_t certs_whitetail_pem_end[]   asm("_binary_certs_whitetail_pem_end");
+extern "C" {
+    extern const uint8_t whitetail_cert_pem_start[] asm("_binary_whitetail_pem_start");
+    extern const uint8_t whitetail_cert_pem_end[] asm("_binary_whitetail_pem_end");
+}
 
 // WiFi
 const char *WIFI_SSID = CONFIG_WIFI_SSID;
 const char *WIFI_PASSWORD = CONFIG_WIFI_PASSWORD;
+
+// ThingsBoard client instance
+Espressif_MQTT_Client<> mqttClient;
+ThingsBoard tb(mqttClient);
+
+// Network interface handle
+static esp_netif_t *s_sta_netif = NULL;
 
 static uint8_t s_led_state = 0;
 
@@ -38,7 +48,8 @@ void blink_led(void)
     gpio_set_level(BLINK_GPIO, s_led_state);
 }
 
-void send_telemetry(void *pvParameters) {
+// This task is now dedicated to blinking the LED
+void blink_task(void *pvParameters) {
     while (1) {
         blink_led();
         /* Toggle the LED state */
@@ -47,15 +58,53 @@ void send_telemetry(void *pvParameters) {
     }
 }
 
-void blink_led_task(void *pvParameters) {
+// This task handles connecting and sending telemetry to ThingsBoard
+void telemetry_task(void *pvParameters) {
     while (1) {
-        ESP_LOGI(TAG, "TELEMETRY");
+        // Wait for the telemetry period before sending the next update
         vTaskDelay((TELEMETRY_PERIOD_SECONDS * 1000) / portTICK_PERIOD_MS);
+
+        if (!tb.connected()) {
+            ESP_LOGI(TAG, "Connecting to ThingsBoard...");
+            if (!tb.connect(THINGSBOARD_SERVER, THINGSBOARD_DEVICE_TOKEN, THINGSBOARD_PORT)) {
+                ESP_LOGE(TAG, "Failed to connect to ThingsBoard");
+                continue; // Retry connection in the next cycle
+            }
+            ESP_LOGI(TAG, "Connected to ThingsBoard");
+        }
+
+        esp_netif_ip_info_t ip_info;
+        esp_err_t ret = esp_netif_get_ip_info(s_sta_netif, &ip_info);
+
+        if (ret == ESP_OK) {
+            char ip_str[IP4ADDR_STRLEN_MAX];
+            esp_ip4addr_ntoa(&ip_info.ip, ip_str, IP4ADDR_STRLEN_MAX);
+            ESP_LOGI(TAG, "Sending telemetry: IP address %s", ip_str);
+            tb.sendTelemetryData("ip_address", ip_str);
+        } else {
+            ESP_LOGE(TAG, "Failed to get IP address. Error: %s", esp_err_to_name(ret));
+        }
+
+        // Process incoming MQTT messages and maintain connection
+        tb.loop();
     }
 }
 
 void configure_thingsboard() {
-    return;
+    ESP_LOGI(TAG, "Configuring ThingsBoard...");
+
+    // Declare the string as static. It will now persist after the function returns.
+    static std::string cert;
+
+    // Only create the string the first time the function is called.
+    if (cert.empty()) {
+        const size_t cert_len = whitetail_cert_pem_end - whitetail_cert_pem_start;
+        cert.assign(reinterpret_cast<const char*>(whitetail_cert_pem_start), cert_len);
+    }
+
+    // The pointer from cert.c_str() will now remain valid indefinitely.
+    mqttClient.set_server_certificate(cert.c_str());
+    ESP_LOGI(TAG, "ThingsBoard configured.");
 }
 
 void wifi_event_handler(void* arg, esp_event_base_t event_base,
@@ -85,7 +134,8 @@ void configure_wifi() {
 
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
+    // Create default WiFi station and store the handle
+    s_sta_netif = esp_netif_create_default_wifi_sta();
 
     // Register WiFi and IP event handler
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
@@ -104,8 +154,8 @@ void configure_wifi() {
 
     wifi_config_t wifi_config;
     memset(&wifi_config, 0, sizeof(wifi_config));
-    strncpy(reinterpret_cast<char*>(wifi_config.sta.ssid), WIFI_SSID, strlen(WIFI_SSID) + 1);
-    strncpy(reinterpret_cast<char*>(wifi_config.sta.password), WIFI_PASSWORD, strlen(WIFI_PASSWORD) + 1);
+    strncpy(reinterpret_cast<char*>(wifi_config.sta.ssid), WIFI_SSID, sizeof(wifi_config.sta.ssid) -1);
+    strncpy(reinterpret_cast<char*>(wifi_config.sta.password), WIFI_PASSWORD, sizeof(wifi_config.sta.password) - 1);
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
@@ -118,8 +168,9 @@ void configure_nvs_flash() {
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
-        ESP_ERROR_CHECK(nvs_flash_init());
+        ret = nvs_flash_init();
     }
+    ESP_ERROR_CHECK(ret);
 }
 
 void configure_led(void)
@@ -144,21 +195,20 @@ extern "C" void app_main(void)
     configure();
 
     xTaskCreate(
-        blink_led_task,    // Task function
-        "BlinkLED",        // Task name (for debugging)
+        blink_task,         // Task function
+        "BlinkTask",        // Task name (for debugging)
         2048,               // Stack size in bytes
         NULL,               // Task parameter
-        10,                 // Task priority
+        5,                  // Task priority
         NULL                // Task handle (optional)
     );
 
     xTaskCreate(
-        send_telemetry,    // Task function
-        "Telemetry",        // Task name (for debugging)
-        2048,               // Stack size in bytes
+        telemetry_task,     // Task function
+        "TelemetryTask",    // Task name (for debugging)
+        4096,               // Stack size (increased for TLS)
         NULL,               // Task parameter
-        10,                 // Task priority
+        5,                  // Task priority
         NULL                // Task handle (optional)
     );
-
 }
