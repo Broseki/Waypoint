@@ -22,5 +22,25 @@ menu "Waypoint Device Configuration"
         default "your-password"
         help
             The password for the WiFi network.
+    
+    config MQTT_KEY
+        string "MQTT Key"
+        default "your-mqtt-key"
+        help
+            The key used for MQTT authentication.
+    
+    config MQTT_SERVER
+        string "MQTT Server"
+        default "mqtt.example.com"
+        help
+            The address of the MQTT server to connect to.
+            This is used for sending and receiving messages over MQTT.
+    
+    config MQTT_PORT
+        int "MQTT Port"
+        range 1 65535
+        default 1883
+        help
+            The port number of the MQTT server.
 
 endmenu
