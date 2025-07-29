@@ -9,10 +9,12 @@
 #include "esp_event.h"
 #include "nvs_flash.h"
 #include "esp_netif.h"
+#include <Espressif_MQTT_Client.h>
+#include <ThingsBoard.h>
 
 static const char *TAG = "Waypoint";
 
-#define BLINK_GPIO CONFIG_BLINK_GPIO
+#define BLINK_GPIO (gpio_num_t)CONFIG_BLINK_GPIO
 
 // ThingsBoard Configuration
 #define TELEMETRY_PERIOD_SECONDS 30
@@ -30,7 +32,7 @@ const char *WIFI_PASSWORD = CONFIG_WIFI_PASSWORD;
 
 static uint8_t s_led_state = 0;
 
-static void blink_led(void)
+void blink_led(void)
 {
     /* Set the GPIO level according to the state (LOW or HIGH)*/
     gpio_set_level(BLINK_GPIO, s_led_state);
@@ -52,11 +54,11 @@ void blink_led_task(void *pvParameters) {
     }
 }
 
-static void configure_thingsboard() {
+void configure_thingsboard() {
     return;
 }
 
-static void wifi_event_handler(void* arg, esp_event_base_t event_base,
+void wifi_event_handler(void* arg, esp_event_base_t event_base,
                               int32_t event_id, void* event_data)
 {
     if (event_base == WIFI_EVENT) {
@@ -78,7 +80,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
-static void configure_wifi() {
+void configure_wifi() {
     ESP_LOGI(TAG, "Initializing WiFi...");
 
     ESP_ERROR_CHECK(esp_netif_init());
@@ -100,9 +102,10 @@ static void configure_wifi() {
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    wifi_config_t wifi_config = { 0 };
-    strncpy((char *)wifi_config.sta.ssid, WIFI_SSID, sizeof(wifi_config.sta.ssid));
-    strncpy((char *)wifi_config.sta.password, WIFI_PASSWORD, sizeof(wifi_config.sta.password));
+    wifi_config_t wifi_config;
+    memset(&wifi_config, 0, sizeof(wifi_config));
+    strncpy(reinterpret_cast<char*>(wifi_config.sta.ssid), WIFI_SSID, strlen(WIFI_SSID) + 1);
+    strncpy(reinterpret_cast<char*>(wifi_config.sta.password), WIFI_PASSWORD, strlen(WIFI_PASSWORD) + 1);
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
@@ -111,7 +114,7 @@ static void configure_wifi() {
     ESP_LOGI(TAG, "WiFi initialization complete. Connecting to %s...", WIFI_SSID);
 }
 
-static void configure_nvs_flash() {
+void configure_nvs_flash() {
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -119,14 +122,14 @@ static void configure_nvs_flash() {
     }
 }
 
-static void configure_led(void)
+void configure_led(void)
 {
     gpio_reset_pin(BLINK_GPIO);
     /* Set the GPIO as a push/pull output */
     gpio_set_direction(BLINK_GPIO, GPIO_MODE_OUTPUT);
 }
 
-static void configure() {
+void configure() {
     ESP_LOGI(TAG, "Configuring System...");
     configure_led();
     configure_nvs_flash();
@@ -135,7 +138,7 @@ static void configure() {
     ESP_LOGI(TAG, "Configuration complete!");
 }
 
-void app_main(void)
+extern "C" void app_main(void)
 {
     /* Configure the peripheral according to the LED type */
     configure();
