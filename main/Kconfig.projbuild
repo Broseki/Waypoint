@@ -42,5 +42,11 @@ menu "Waypoint Device Configuration"
         default 1883
         help
             The port number of the MQTT server.
+    
+    config NTP_SERVER
+        string "NTP Server"
+        default "pool.ntp.org"
+        help
+            The address of the NTP server to synchronize time.
 
 endmenu
