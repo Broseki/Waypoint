@@ -224,3 +224,4 @@ sdkconfig.local.*
 managed_components/
 .cache/
 dependencies.lock
+.vscode/

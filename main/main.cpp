@@ -25,9 +25,7 @@ static const char *TAG = "Waypoint";
 #define THINGSBOARD_DEVICE_TOKEN CONFIG_MQTT_KEY
 
 // ThingsBoard connection variables
-static SemaphoreHandle_t tb_connected_sem = NULL;
 static bool tb_connection_ready = false;
-static StaticSemaphore_t tb_connected_sem_buffer;
 
 // ThingsBoard client instance
 static Espressif_MQTT_Client<> mqttClient;
@@ -100,8 +98,6 @@ void thingsboard_connection_task(void *pvParameters) {
                 tb_connection_ready = true;
                 ESP_LOGI(TAG, "Successfully connected to ThingsBoard");
                 vTaskDelay(5000 / portTICK_PERIOD_MS);
-                // Signal that connection is ready
-                xSemaphoreGive(tb_connected_sem);
             } else {
                 ESP_LOGE(TAG, "Failed to connect to ThingsBoard");
                 vTaskDelay(10000 / portTICK_PERIOD_MS);
@@ -113,8 +109,6 @@ void thingsboard_connection_task(void *pvParameters) {
         if (!tb.loop()) {
             ESP_LOGW(TAG, "ThingsBoard connection lost");
             tb_connection_ready = false;
-            // Take the semaphore to indicate disconnection
-            xSemaphoreTake(tb_connected_sem, 0);
         }
 
         vTaskDelay(100 / portTICK_PERIOD_MS);
@@ -128,9 +122,7 @@ void telemetry_task(void *pvParameters) {
         vTaskDelay((TELEMETRY_PERIOD_SECONDS * 1000) / portTICK_PERIOD_MS);
 
         // Check if ThingsBoard is connected (non-blocking check)
-        if (xSemaphoreTake(tb_connected_sem, 0) == pdTRUE) {
-            // Connection is available, give it back immediately
-            xSemaphoreGive(tb_connected_sem);
+        if (tb_connection_ready) {
 
             esp_netif_ip_info_t ip_info;
             esp_err_t ret = esp_netif_get_ip_info(s_sta_netif, &ip_info);
@@ -255,8 +247,6 @@ extern "C" void app_main(void)
 {
     /* Configure the peripheral according to the LED type */
     configure();
-
-    tb_connected_sem = xSemaphoreCreateBinaryStatic(&tb_connected_sem_buffer);
 
     xTaskCreate(
         blink_task,         // Task function
