@@ -11,6 +11,7 @@
 #include "nvs_flash.h"
 #include "esp_netif.h"
 #include "esp_sntp.h"
+#include "driver/temperature_sensor.h"
 #include <Espressif_MQTT_Client.h>
 #include <ThingsBoard.h>
 
@@ -46,6 +47,9 @@ const char *NTP_SERVER = CONFIG_NTP_SERVER;
 
 // Network interface handle
 static esp_netif_t *s_sta_netif = NULL;
+
+// Temperature sensor handle
+static temperature_sensor_handle_t soc_temp_handle = NULL;
 
 static uint8_t s_led_state = 0;
 
@@ -120,26 +124,23 @@ void telemetry_task(void *pvParameters) {
     while (1) {
         // Wait for the telemetry period
         vTaskDelay((TELEMETRY_PERIOD_SECONDS * 1000) / portTICK_PERIOD_MS);
-
-        // Check if ThingsBoard is connected (non-blocking check)
         if (tb_connection_ready) {
-
+            // Send IP Address
             esp_netif_ip_info_t ip_info;
             esp_err_t ret = esp_netif_get_ip_info(s_sta_netif, &ip_info);
-
             if (ret == ESP_OK) {
+                // Get current IP address
                 char ip_str[IP4ADDR_STRLEN_MAX];
                 esp_ip4addr_ntoa(&ip_info.ip, ip_str, IP4ADDR_STRLEN_MAX);
-                ESP_LOGI(TAG, "Sending telemetry: IP address %s", ip_str);
 
-                if (!tb.sendTelemetryData("ip_address", ip_str)) {
-                    ESP_LOGE(TAG, "Failed to send telemetry");
-                    // Signal connection task to reconnect
-                    tb_connection_ready = false;
-                }
-            } else {
-                ESP_LOGE(TAG, "Failed to get IP address. Error: %s", esp_err_to_name(ret));
+                // Send telemetry data
+                tb.sendTelemetryData("ip_address", ip_str);
             }
+
+            // Send SoC Temperature
+            float soc_temp;
+            ESP_ERROR_CHECK(temperature_sensor_get_celsius(soc_temp_handle, &soc_temp));
+            tb.sendTelemetryData("soc_temperature", soc_temp);
         } else {
             ESP_LOGW(TAG, "ThingsBoard not connected, skipping telemetry");
         }
@@ -218,6 +219,16 @@ void configure_wifi() {
     ESP_LOGI(TAG, "WiFi initialization complete. Connecting to %s...", WIFI_SSID);
 }
 
+void configure_temperature_sensor() {
+    ESP_LOGI(TAG, "Configuring temperature sensor...");
+
+    temperature_sensor_config_t temp_sensor_config = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
+    ESP_ERROR_CHECK(temperature_sensor_install(&temp_sensor_config, &soc_temp_handle));
+    ESP_ERROR_CHECK(temperature_sensor_enable(soc_temp_handle));
+
+    ESP_LOGI(TAG, "Temperature sensor configured successfully.");
+}
+
 void configure_nvs_flash() {
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -236,6 +247,7 @@ void configure_led(void)
 
 void configure() {
     ESP_LOGI(TAG, "Configuring System...");
+    configure_temperature_sensor();
     configure_led();
     configure_nvs_flash();
     configure_wifi();
